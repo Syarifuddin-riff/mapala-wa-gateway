@@ -164,6 +164,21 @@ function backupSessionToCloud() {
     }, 4000);
 }
 
+function clearSessionFiles() {
+    try {
+        if (!fs.existsSync(SESSION_DIR)) return;
+        const files = fs.readdirSync(SESSION_DIR);
+        for (const f of files) {
+            try {
+                fs.rmSync(path.join(SESSION_DIR, f), { recursive: true, force: true });
+            } catch (e) {}
+        }
+        console.log('[Baileys] Isi folder sesi berhasil dibersihkan.');
+    } catch (e) {
+        console.warn('[Clear Session Error]', e.message);
+    }
+}
+
 let reconnectTimer = null;
 let isStarting = false;
 
@@ -255,9 +270,7 @@ async function startWhatsApp() {
                 }, delay);
             } else {
                 console.log('[Baileys] Device logged out. Menghapus sesi lama...');
-                try {
-                    fs.rmSync(SESSION_DIR, { recursive: true, force: true });
-                } catch (e) {}
+                clearSessionFiles();
                 clearTimeout(reconnectTimer);
                 reconnectTimer = setTimeout(() => startWhatsApp(), 3000);
             }
@@ -689,9 +702,7 @@ app.post('/api/logout', async (req, res) => {
             } catch (e) {}
             sock = null;
         }
-        try {
-            fs.rmSync(SESSION_DIR, { recursive: true, force: true });
-        } catch (e) {}
+        clearSessionFiles();
 
         // Bersihkan cadangan sesi di database web
         try {
@@ -699,8 +710,26 @@ app.post('/api/logout', async (req, res) => {
             await axios.post(DEL_URL, { session_data: '' }, { timeout: 10000 });
         } catch (e) {}
 
+        isStarting = false;
+        clearTimeout(reconnectTimer);
         setTimeout(() => startWhatsApp(), 2000);
         res.json({ status: 'success', message: 'Sesi WhatsApp berhasil diputuskan (logout).' });
+    } catch (err) {
+        res.status(500).json({ status: 'error', message: err.message });
+    }
+});
+
+app.post('/api/clean', (req, res) => {
+    try {
+        if (sock) {
+            try { sock.ev.removeAllListeners(); sock.end(undefined); } catch (e) {}
+            sock = null;
+        }
+        clearSessionFiles();
+        isStarting = false;
+        clearTimeout(reconnectTimer);
+        setTimeout(() => startWhatsApp(), 1500);
+        res.json({ status: 'success', message: 'Folder sesi dibersihkan. Memulai QR baru...' });
     } catch (err) {
         res.status(500).json({ status: 'error', message: err.message });
     }
