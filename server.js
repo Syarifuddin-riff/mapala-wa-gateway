@@ -610,6 +610,8 @@ app.get('/qr', (req, res) => {
 
 app.get('/api/debug', (req, res) => {
     res.json({
+        hostname: require('os').hostname(),
+        pid: process.pid,
         connectionStatus,
         botUser,
         connectedAt,
