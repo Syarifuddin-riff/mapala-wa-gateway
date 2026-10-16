@@ -260,6 +260,18 @@ async function startWhatsApp() {
             qrDataUrl = null;
             botUser = null;
 
+            if (statusCode === 440) {
+                consecutiveConflictCount = (typeof consecutiveConflictCount !== 'undefined' ? consecutiveConflictCount : 0) + 1;
+                console.log(`[Baileys] 440 conflict count: ${consecutiveConflictCount}`);
+                if (consecutiveConflictCount >= 3) {
+                    console.log('[Baileys] 3x berturut-turut conflict 440 terdeteksi. Mereset sesi dan menyiapkan QR baru...');
+                    clearSessionFiles();
+                    consecutiveConflictCount = 0;
+                }
+            } else if (statusCode !== 440) {
+                consecutiveConflictCount = 0;
+            }
+
             if (shouldReconnect) {
                 clearTimeout(reconnectTimer);
                 let delay = 4000;
@@ -276,6 +288,7 @@ async function startWhatsApp() {
                 reconnectTimer = setTimeout(() => startWhatsApp(), 3000);
             }
         } else if (connection === 'open') {
+            consecutiveConflictCount = 0;
             isStarting = false;
             clearTimeout(reconnectTimer);
             connectionStatus = 'connected';
