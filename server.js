@@ -510,6 +510,52 @@ setInterval(async () => {
     }
 }, 3000);
 
+// ===== DAEMON POLLING EMAIL OUTBOX: PENGIRIMAN EMAIL CLOUD RELAY =====
+const EMAIL_OUTBOX_URL = WEBHOOK_URL.replace(/\/webhook\/?$/, '/email_outbox');
+const CONFIRM_EMAIL_URL = WEBHOOK_URL.replace(/\/webhook\/?$/, '/confirm_email_outbox');
+
+let isPollingEmailOutbox = false;
+setInterval(async () => {
+    if (isPollingEmailOutbox) return;
+    isPollingEmailOutbox = true;
+
+    try {
+        const res = await axios.get(EMAIL_OUTBOX_URL, { timeout: 8000 });
+        const emails = res.data?.emails || [];
+
+        for (const item of emails) {
+            const to = (item.recipient || '').trim();
+            if (!to || !item.subject) continue;
+
+            try {
+                console.log(`[Email Outbox] Mengirim email #${item.id} ke ${to}...`);
+                const gasRes = await axios.post(GAS_DEFAULT_URL, {
+                    key: GAS_SECRET,
+                    to: to,
+                    subject: item.subject,
+                    body: item.plain_body || 'Silakan buka email ini menggunakan aplikasi atau browser yang mendukung HTML.',
+                    html: item.html_message || '',
+                    sender_name: item.sender_name || 'Mapala Peregrina UNISM'
+                }, {
+                    headers: { 'Content-Type': 'application/json' },
+                    timeout: 15000,
+                    maxRedirects: 5
+                });
+
+                await axios.post(CONFIRM_EMAIL_URL, { id: item.id, status: 'sent', response: JSON.stringify(gasRes.data) }, { timeout: 5000 });
+                console.log(`[Email Outbox] Email #${item.id} berhasil terkirim ke ${to}!`);
+            } catch (err) {
+                console.error(`[Email Outbox Error] Gagal kirim #${item.id} ke ${to}: ${err.message}`);
+                await axios.post(CONFIRM_EMAIL_URL, { id: item.id, status: 'failed', error: err.message }, { timeout: 5000 });
+            }
+        }
+    } catch (e) {
+        // Silent ignore on network glitch
+    } finally {
+        isPollingEmailOutbox = false;
+    }
+}, 5000);
+
 // ===== API REST ENDPOINTS UNTUK PANEL DEVELOPER =====
 
 app.get('/api/status', (req, res) => {
@@ -687,6 +733,48 @@ app.post('/api/send', async (req, res) => {
         res.json({ status: 'success', message: 'Pesan berhasil dikirim.' });
     } catch (err) {
         res.status(500).json({ status: 'error', message: err.message });
+    }
+});
+
+// ===== EMAIL CLOUD RELAY (HTTPS GATEWAY FOR GOOGLE APPS SCRIPT) =====
+const GAS_DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbz98bePUKJewxtfcTX4jF3lL2vnb-MZHIw9Om3IMLIqKmSC4ecAnQT5VQuJgvrsYpl7aA/exec';
+const GAS_SECRET = 'MAPALA_PEREGRINA_SECRET_2026';
+
+app.post('/api/send-email', async (req, res) => {
+    const { to, subject, html, body, sender_name, gas_url } = req.body;
+    if (!to || !subject) {
+        return res.status(400).json({ status: 'error', message: 'Tujuan (to) dan perihal (subject) email wajib diisi.' });
+    }
+
+    try {
+        const targetUrl = gas_url || GAS_DEFAULT_URL;
+        console.log(`[Email Relay] Mengirim email ke ${to} via Google Apps Script...`);
+        const response = await axios.post(targetUrl, {
+            key: GAS_SECRET,
+            to: to,
+            subject: subject,
+            body: body || 'Silakan buka email ini menggunakan aplikasi atau browser yang mendukung tampilan HTML.',
+            html: html || '',
+            sender_name: sender_name || 'Mapala Peregrina UNISM'
+        }, {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 15000,
+            maxRedirects: 5
+        });
+
+        console.log(`[Email Relay] Respon GAS:`, response.status, response.data);
+        return res.json({
+            status: 'success',
+            message: 'Email berhasil dikirim via Railway Cloud Relay',
+            data: response.data
+        });
+    } catch (err) {
+        console.error(`[Email Relay Error]`, err.message);
+        return res.status(500).json({
+            status: 'error',
+            message: 'Gagal mengirim email: ' + err.message,
+            detail: err.response ? err.response.data : null
+        });
     }
 });
 
