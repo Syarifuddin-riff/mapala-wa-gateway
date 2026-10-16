@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: mapala-wa-gateway
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: WEBHOOK_URL
+        value: https://mapalaperegrina.gt.tc/whatsapp/webhook

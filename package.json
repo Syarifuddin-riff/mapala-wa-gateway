@@ -1,0 +1,17 @@
+{
+  "name": "mapala-whatsapp-gateway",
+  "version": "1.0.0",
+  "description": "WhatsApp Baileys Gateway for Mapala Peregrina Web Automation",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.24",
+    "axios": "^1.7.9",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "pino": "^9.6.0",
+    "qrcode": "^1.5.4"
+  }
+}
