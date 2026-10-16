@@ -101,11 +101,19 @@ axios.interceptors.response.use(async (response) => {
     return response;
 });
 
+process.on('uncaughtException', (err) => {
+    console.error('[Uncaught Exception]', err.message);
+});
+process.on('unhandledRejection', (reason) => {
+    console.error('[Unhandled Rejection]', reason);
+});
+
 let sock = null;
 let qrDataUrl = null;
 let connectionStatus = 'disconnected'; // 'disconnected' | 'connecting' | 'qr_ready' | 'connected'
 let botUser = null;
 let connectedAt = null;
+let lastDisconnectInfo = null;
 
 // ===== CLOUD SESSION SYNC (CADANGAN SESI OTOMATIS KE DATABASE WEB) =====
 async function syncSessionFromCloud() {
@@ -160,6 +168,14 @@ async function startWhatsApp() {
     connectionStatus = 'connecting';
     qrDataUrl = null;
 
+    if (sock) {
+        try {
+            sock.ev.removeAllListeners();
+            sock.end();
+        } catch (e) {}
+        sock = null;
+    }
+
     if (!fs.existsSync(SESSION_DIR)) {
         fs.mkdirSync(SESSION_DIR, { recursive: true });
     }
@@ -174,7 +190,12 @@ async function startWhatsApp() {
         version,
         auth: state,
         logger: pino({ level: 'silent' }),
-        browser: ['Assistant Peregrina', 'Chrome', '1.0.0']
+        browser: ['Assistant Peregrina', 'Chrome', '1.0.0'],
+        syncFullHistory: false,
+        generateHighQualityLinkPreview: false,
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000,
+        keepAliveIntervalMs: 25000
     });
 
     sock.ev.on('creds.update', async () => {
@@ -193,20 +214,22 @@ async function startWhatsApp() {
                 console.error('[QR Error]', err);
             }
             console.log('[Baileys] QR Code baru siap dipindai');
-
         }
 
         if (connection === 'close') {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const errorMsg = lastDisconnect?.error?.message || String(lastDisconnect?.error);
+            lastDisconnectInfo = { statusCode, error: errorMsg, time: new Date().toISOString() };
             const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-            console.log(`[Baileys] Koneksi terputus (status: ${statusCode}). Reconnect: ${shouldReconnect}`);
+            console.log(`[Baileys] Koneksi terputus (status: ${statusCode}, msg: ${errorMsg}). Reconnect: ${shouldReconnect}`);
 
             connectionStatus = 'disconnected';
             qrDataUrl = null;
             botUser = null;
 
             if (shouldReconnect) {
-                setTimeout(() => startWhatsApp(), 3000);
+                const delay = (statusCode === 515 || statusCode === 428) ? 1500 : 4000;
+                setTimeout(() => startWhatsApp(), delay);
             } else {
                 console.log('[Baileys] Device logged out. Menghapus sesi lama...');
                 try {
@@ -556,6 +579,16 @@ app.get('/qr', (req, res) => {
     </script>
 </body>
 </html>`);
+});
+
+app.get('/api/debug', (req, res) => {
+    res.json({
+        connectionStatus,
+        botUser,
+        connectedAt,
+        lastDisconnectInfo,
+        uptime: process.uptime()
+    });
 });
 
 app.get('/api/qr', (req, res) => {
