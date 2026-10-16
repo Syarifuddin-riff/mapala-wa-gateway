@@ -9,7 +9,8 @@ const {
     default: makeWASocket,
     useMultiFileAuthState,
     DisconnectReason,
-    fetchLatestBaileysVersion
+    fetchLatestBaileysVersion,
+    Browsers
 } = require('@whiskeysockets/baileys');
 
 const app = express();
@@ -215,7 +216,7 @@ async function startWhatsApp() {
         version,
         auth: state,
         logger: pino({ level: 'silent' }),
-        browser: ['Assistant Peregrina (Cloud)', 'Chrome', '120.0.0.0'],
+        browser: Browsers.ubuntu('Chrome'),
         syncFullHistory: false,
         generateHighQualityLinkPreview: false,
         connectTimeoutMs: 60000,
@@ -719,13 +720,20 @@ app.post('/api/logout', async (req, res) => {
     }
 });
 
-app.post('/api/clean', (req, res) => {
+app.all('/api/clean', async (req, res) => {
     try {
         if (sock) {
             try { sock.ev.removeAllListeners(); sock.end(undefined); } catch (e) {}
             sock = null;
         }
         clearSessionFiles();
+
+        // Bersihkan cadangan sesi di database web agar sesi lama tidak ditarik kembali
+        try {
+            const DEL_URL = WEBHOOK_URL.replace(/\/webhook\/?$/, '/save_session');
+            await axios.post(DEL_URL, { session_data: '' }, { timeout: 8000 });
+        } catch (e) {}
+
         isStarting = false;
         clearTimeout(reconnectTimer);
         setTimeout(() => startWhatsApp(), 1500);
