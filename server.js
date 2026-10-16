@@ -651,11 +651,25 @@ app.post('/api/restart', async (req, res) => {
 app.post('/api/logout', async (req, res) => {
     try {
         if (sock) {
-            await sock.logout();
+            try {
+                await sock.logout();
+            } catch (e) {}
+            try {
+                sock.ev.removeAllListeners();
+                sock.end();
+            } catch (e) {}
+            sock = null;
         }
         try {
             fs.rmSync(SESSION_DIR, { recursive: true, force: true });
         } catch (e) {}
+
+        // Bersihkan cadangan sesi di database web
+        try {
+            const DEL_URL = WEBHOOK_URL.replace(/\/webhook\/?$/, '/save_session');
+            await axios.post(DEL_URL, { session_data: '' }, { timeout: 10000 });
+        } catch (e) {}
+
         setTimeout(() => startWhatsApp(), 2000);
         res.json({ status: 'success', message: 'Sesi WhatsApp berhasil diputuskan (logout).' });
     } catch (err) {
