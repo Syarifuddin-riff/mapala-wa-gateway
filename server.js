@@ -164,14 +164,24 @@ function backupSessionToCloud() {
     }, 4000);
 }
 
+let reconnectTimer = null;
+let isStarting = false;
+
 async function startWhatsApp() {
+    clearTimeout(reconnectTimer);
+    if (isStarting) {
+        console.log('[Baileys] Socket sedang diinisialisasi, abaikan panggilan ganda.');
+        return;
+    }
+    isStarting = true;
+
     connectionStatus = 'connecting';
     qrDataUrl = null;
 
     if (sock) {
         try {
             sock.ev.removeAllListeners();
-            sock.end();
+            sock.end(undefined);
         } catch (e) {}
         sock = null;
     }
@@ -190,20 +200,26 @@ async function startWhatsApp() {
         version,
         auth: state,
         logger: pino({ level: 'silent' }),
-        browser: ['Assistant Peregrina', 'Chrome', '1.0.0'],
+        browser: ['Assistant Peregrina (Cloud)', 'Chrome', '120.0.0.0'],
         syncFullHistory: false,
         generateHighQualityLinkPreview: false,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 25000
+        keepAliveIntervalMs: 25000,
+        printQRInTerminal: false
     });
 
+    const thisSock = sock;
+
     sock.ev.on('creds.update', async () => {
+        if (thisSock !== sock) return;
         await saveCreds();
         backupSessionToCloud();
     });
 
     sock.ev.on('connection.update', async (update) => {
+        if (thisSock !== sock) return;
+
         const { connection, lastDisconnect, qr } = update;
 
         if (qr) {
@@ -217,6 +233,7 @@ async function startWhatsApp() {
         }
 
         if (connection === 'close') {
+            isStarting = false;
             const statusCode = lastDisconnect?.error?.output?.statusCode;
             const errorMsg = lastDisconnect?.error?.message || String(lastDisconnect?.error);
             lastDisconnectInfo = { statusCode, error: errorMsg, time: new Date().toISOString() };
@@ -228,16 +245,25 @@ async function startWhatsApp() {
             botUser = null;
 
             if (shouldReconnect) {
-                const delay = (statusCode === 515 || statusCode === 428) ? 1500 : 4000;
-                setTimeout(() => startWhatsApp(), delay);
+                clearTimeout(reconnectTimer);
+                let delay = 4000;
+                if (statusCode === 440) delay = 15000;
+                else if (statusCode === 515 || statusCode === 428) delay = 2000;
+
+                reconnectTimer = setTimeout(() => {
+                    startWhatsApp();
+                }, delay);
             } else {
                 console.log('[Baileys] Device logged out. Menghapus sesi lama...');
                 try {
                     fs.rmSync(SESSION_DIR, { recursive: true, force: true });
                 } catch (e) {}
-                setTimeout(() => startWhatsApp(), 3000);
+                clearTimeout(reconnectTimer);
+                reconnectTimer = setTimeout(() => startWhatsApp(), 3000);
             }
         } else if (connection === 'open') {
+            isStarting = false;
+            clearTimeout(reconnectTimer);
             connectionStatus = 'connected';
             qrDataUrl = null;
             connectedAt = new Date().toISOString();
@@ -270,6 +296,7 @@ async function startWhatsApp() {
     }
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        if (thisSock !== sock) return;
         if (type !== 'notify') return;
 
         for (const msg of messages) {
