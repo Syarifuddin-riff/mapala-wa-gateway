@@ -115,54 +115,21 @@ let connectionStatus = 'disconnected'; // 'disconnected' | 'connecting' | 'qr_re
 let botUser = null;
 let connectedAt = null;
 let lastDisconnectInfo = null;
+let conflictCount = 0;
+let stableTimer = null;
+let reconnectTimer = null;
+let isStarting = false;
 
-// ===== CLOUD SESSION SYNC (CADANGAN SESI OTOMATIS KE DATABASE WEB) =====
+// ===== SESSION PERSISTENCE =====
+// Railway menggunakan Docker Volume persisten di /app/session_auth.
+// Sinkronisasi blob via HTTP ke database gratis InfinityFree tidak lagi diperlukan
+// guna mencegah pembekuan koneksi dan korupsi berkas akibat anti-bot challenge.
 async function syncSessionFromCloud() {
-    try {
-        if (!fs.existsSync(SESSION_DIR)) {
-            fs.mkdirSync(SESSION_DIR, { recursive: true });
-        }
-        const credsFile = path.join(SESSION_DIR, 'creds.json');
-        if (!fs.existsSync(credsFile)) {
-            console.log('[Baileys] Memeriksa cadangan sesi dari database web...');
-            const LOAD_URL = WEBHOOK_URL.replace(/\/webhook\/?$/, '/load_session');
-            const res = await axios.get(LOAD_URL, { timeout: 10000 });
-            if (res.data?.session_data) {
-                const parsed = JSON.parse(Buffer.from(res.data.session_data, 'base64').toString('utf8'));
-                for (const [fname, content] of Object.entries(parsed)) {
-                    fs.writeFileSync(path.join(SESSION_DIR, fname), content, 'utf8');
-                }
-                console.log('[Baileys] Sesi berhasil dipulihkan dari database web! Menghubungkan otomatis...');
-            }
-        }
-    } catch (e) {
-        console.warn('[Session Sync Warning]', e.message);
-    }
+    return;
 }
 
-let syncTimeout = null;
 function backupSessionToCloud() {
-    clearTimeout(syncTimeout);
-    syncTimeout = setTimeout(async () => {
-        try {
-            if (!fs.existsSync(SESSION_DIR)) return;
-            const files = fs.readdirSync(SESSION_DIR);
-            const bundle = {};
-            for (const f of files) {
-                if (f.endsWith('.json')) {
-                    bundle[f] = fs.readFileSync(path.join(SESSION_DIR, f), 'utf8');
-                }
-            }
-            if (Object.keys(bundle).length > 0) {
-                const b64 = Buffer.from(JSON.stringify(bundle)).toString('base64');
-                const SAVE_URL = WEBHOOK_URL.replace(/\/webhook\/?$/, '/save_session');
-                await axios.post(SAVE_URL, { session_data: b64 }, { timeout: 10000 });
-                console.log('[Baileys] Cadangan sesi berhasil disinkronkan ke database web!');
-            }
-        } catch (e) {
-            console.warn('[Session Backup Warning]', e.message);
-        }
-    }, 4000);
+    return;
 }
 
 function clearSessionFiles() {
@@ -180,8 +147,19 @@ function clearSessionFiles() {
     }
 }
 
-let reconnectTimer = null;
-let isStarting = false;
+async function closeSocketGracefully() {
+    if (sock) {
+        try {
+            sock.ev.removeAllListeners();
+            if (sock.ws) {
+                try { sock.ws.removeAllListeners(); } catch (e) {}
+                try { sock.ws.close(); } catch (e) {}
+            }
+            sock.end(undefined);
+        } catch (e) {}
+        sock = null;
+    }
+}
 
 async function startWhatsApp() {
     clearTimeout(reconnectTimer);
@@ -194,20 +172,11 @@ async function startWhatsApp() {
     connectionStatus = 'connecting';
     qrDataUrl = null;
 
-    if (sock) {
-        try {
-            sock.ev.removeAllListeners();
-            sock.end(undefined);
-        } catch (e) {}
-        sock = null;
-    }
+    await closeSocketGracefully();
 
     if (!fs.existsSync(SESSION_DIR)) {
         fs.mkdirSync(SESSION_DIR, { recursive: true });
     }
-
-    // Pulihkan sesi dari database web jika belum ada di lokal/cloud
-    await syncSessionFromCloud();
 
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     const { version } = await fetchLatestBaileysVersion();
@@ -230,7 +199,6 @@ async function startWhatsApp() {
     sock.ev.on('creds.update', async () => {
         if (thisSock !== sock) return;
         await saveCreds();
-        backupSessionToCloud();
     });
 
     sock.ev.on('connection.update', async (update) => {
@@ -259,36 +227,36 @@ async function startWhatsApp() {
             connectionStatus = 'disconnected';
             qrDataUrl = null;
             botUser = null;
+            clearTimeout(stableTimer);
 
             if (statusCode === 440) {
-                consecutiveConflictCount = (typeof consecutiveConflictCount !== 'undefined' ? consecutiveConflictCount : 0) + 1;
-                console.log(`[Baileys] 440 conflict count: ${consecutiveConflictCount}`);
-                if (consecutiveConflictCount >= 3) {
+                conflictCount++;
+                console.log(`[Baileys] 440 conflict count: ${conflictCount}`);
+                if (conflictCount >= 3) {
                     console.log('[Baileys] 3x berturut-turut conflict 440 terdeteksi. Mereset sesi dan menyiapkan QR baru...');
                     clearSessionFiles();
-                    consecutiveConflictCount = 0;
+                    conflictCount = 0;
                 }
-            } else if (statusCode !== 440) {
-                consecutiveConflictCount = 0;
+            } else if (statusCode === DisconnectReason.loggedOut) {
+                console.log('[Baileys] Device logged out. Menghapus sesi lama...');
+                clearSessionFiles();
+                conflictCount = 0;
             }
 
             if (shouldReconnect) {
                 clearTimeout(reconnectTimer);
-                let delay = 4000;
-                if (statusCode === 440) delay = 15000;
-                else if (statusCode === 515 || statusCode === 428) delay = 2000;
+                let delay = 3500;
+                if (statusCode === 440) delay = 8000;
+                else if (statusCode === 515 || statusCode === 428) delay = 2500;
 
                 reconnectTimer = setTimeout(() => {
                     startWhatsApp();
                 }, delay);
             } else {
-                console.log('[Baileys] Device logged out. Menghapus sesi lama...');
-                clearSessionFiles();
                 clearTimeout(reconnectTimer);
-                reconnectTimer = setTimeout(() => startWhatsApp(), 3000);
+                reconnectTimer = setTimeout(() => startWhatsApp(), 2000);
             }
         } else if (connection === 'open') {
-            consecutiveConflictCount = 0;
             isStarting = false;
             clearTimeout(reconnectTimer);
             connectionStatus = 'connected';
@@ -299,6 +267,13 @@ async function startWhatsApp() {
                 name: sock.user?.name || 'Assistant Peregrina'
             };
             console.log(`[Baileys] Terhubung ke WhatsApp! Akun: ${botUser.id} (${botUser.name})`);
+
+            // Sesi stabil jika berhasil bertahan minimal 45 detik
+            clearTimeout(stableTimer);
+            stableTimer = setTimeout(() => {
+                conflictCount = 0;
+                console.log('[Baileys] Koneksi WhatsApp stabil (>45 detik). Reset counter conflict.');
+            }, 45000);
         }
     });
 
@@ -602,6 +577,11 @@ app.get('/qr', (req, res) => {
                             <p class="text-muted font-weight-bold small mb-3">\${data.botUser?.id ? '+' + data.botUser.id.replace(/[^0-9]/g, '') : 'Aktif'}</p>
                             <span class="badge badge-success px-3 py-2 font-weight-bold">Status: Online 24/7 di Cloud</span>
                             <p class="small text-muted mt-3 mb-0">Bot WhatsApp siap melayani pesan pribadi & grup tanpa perlu laptop menyala!</p>
+                            <div class="mt-4 pt-3 border-top">
+                                <button class="btn btn-sm btn-outline-danger" onclick="resetSession()">
+                                    <i class="fas fa-power-off mr-1"></i> Putuskan Sesi &amp; Buat QR Baru
+                                </button>
+                            </div>
                         </div>
                     \`;
                 } else if (data.status === 'qr_ready') {
@@ -614,7 +594,12 @@ app.get('/qr', (req, res) => {
                             <div class="p-2 border rounded bg-light d-inline-block mb-3 shadow-sm">
                                 <img src="\${qrData.qr}" style="width:220px; height:220px;" alt="QR Code">
                             </div>
-                            <p class="small text-muted mb-0"><i class="fas fa-sync fa-spin mr-1 text-primary"></i> Otomatis diperbarui setiap saat</p>
+                            <p class="small text-muted mb-3"><i class="fas fa-sync fa-spin mr-1 text-primary"></i> Otomatis diperbarui setiap saat</p>
+                            <div class="pt-2 border-top">
+                                <button class="btn btn-sm btn-outline-secondary" onclick="resetSession()">
+                                    <i class="fas fa-redo-alt mr-1"></i> Refresh / Bersihkan Sesi
+                                </button>
+                            </div>
                         \`;
                     }
                 } else {
@@ -628,6 +613,19 @@ app.get('/qr', (req, res) => {
                 }
             } catch(e) {}
         }
+
+        async function resetSession() {
+            if (!confirm('Apakah Anda yakin ingin mengatur ulang sesi WhatsApp dan membuat QR Code baru?')) return;
+            try {
+                const box = document.getElementById('content-box');
+                box.innerHTML = '<div class="py-4"><div class="spinner-border text-warning mb-3"></div><p class="text-muted small">Mereset sesi & menyiapkan QR baru...</p></div>';
+                await fetch('/api/clean', { method: 'POST' });
+                setTimeout(checkStatus, 2000);
+            } catch(e) {
+                alert('Gagal reset: ' + e.message);
+            }
+        }
+
         checkStatus();
         setInterval(checkStatus, 3000);
     </script>
