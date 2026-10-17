@@ -15,7 +15,8 @@ const {
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 const PORT = process.env.PORT || 3000;
 const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://mapalaperegrina.gt.tc/whatsapp/webhook';
@@ -851,28 +852,42 @@ async function triggerAutoDatabaseBackup(triggerSource = 'Jadwal Otomatis 05:00 
 
         const res = await axios.post(AUTO_BACKUP_URL, postData, { headers, timeout: 90000 });
         console.log('[Backup Scheduler] Hasil pencadangan database:', res.data);
+        return res.data;
     } catch (err) {
         console.error('[Backup Scheduler Error]', err.message);
+        return { error: err.message };
     }
 }
 
 function checkDailyBackupSchedule() {
     const now = new Date();
-    // Hitung jam di zona WITA (UTC+8)
-    const witaHours = (now.getUTCHours() + 8) % 24;
-    const witaMinutes = now.getUTCMinutes();
-    const todayStr = `${now.getUTCFullYear()}-${now.getUTCMonth() + 1}-${now.getUTCDate()}`;
+    // Hitung waktu tepat di zona WITA (UTC+8)
+    const witaTime = new Date(now.getTime() + (8 * 3600 * 1000));
+    const witaHours = witaTime.getUTCHours();
+    const witaMinutes = witaTime.getUTCMinutes();
+    const todayWita = `${witaTime.getUTCFullYear()}-${witaTime.getUTCMonth() + 1}-${witaTime.getUTCDate()}`;
 
     // Jalankan setiap jam 05:00 WITA (antara 05:00 s.d 05:03) dan hanya 1x per hari
-    if (witaHours === 5 && witaMinutes < 4 && lastAutoBackupDay !== todayStr) {
-        lastAutoBackupDay = todayStr;
-        console.log(`[Backup Scheduler] Waktu 05:00 WITA tiba (${todayStr}). Mengeksekusi backup database...`);
+    if (witaHours === 5 && witaMinutes < 4 && lastAutoBackupDay !== todayWita) {
+        lastAutoBackupDay = todayWita;
+        console.log(`[Backup Scheduler] Waktu 05:00 WITA tiba (${todayWita}). Mengeksekusi backup database...`);
         triggerAutoDatabaseBackup('Jadwal Otomatis Harian 05:00 WITA');
     }
 }
 
 // Periksa setiap 30 detik
 setInterval(checkDailyBackupSchedule, 30000);
+
+// Endpoint manual trigger pencadangan database via Railway
+app.all('/api/trigger-backup', async (req, res) => {
+    const key = req.query.key || (req.body && req.body.key);
+    if (key !== 'MAPALA_BACKUP_SECRET_2026') {
+        return res.status(403).json({ ok: false, error: 'Unauthorized secret key' });
+    }
+    const source = req.query.source || (req.body && req.body.source) || 'Manual API Trigger';
+    const result = await triggerAutoDatabaseBackup(source);
+    return res.json({ ok: true, result });
+});
 
 // ===== EMAIL CLOUD RELAY (HTTPS GATEWAY FOR GOOGLE APPS SCRIPT) =====
 const GAS_DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbx0ODR1jVy2lf-klShJ29SY2QEfLylM7MWhBM-u-xX8bqpK4t0WOD37_y3ctxVaeqk2/exec';
