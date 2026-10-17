@@ -781,6 +781,26 @@ app.post('/telegram/webhook', async (req, res) => {
     }
 });
 
+// ===== TELEGRAM API CALL RELAY (BYPASS INFINITYFREE DNS/OUTGOING FIREWALL) =====
+app.post('/api/telegram-call/:method', async (req, res) => {
+    const { method } = req.params;
+    const token = req.body.token || '8675881429:AAFGlRIx0rVKO7dOuHvLgCEy27zZh4iPPMI';
+    const params = req.body.params || {};
+
+    try {
+        console.log(`[Telegram API Relay] Calling api.telegram.org -> ${method}`);
+        const tgRes = await axios.post(`https://api.telegram.org/bot${token}/${method}`, params, {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 20000
+        });
+        return res.json(tgRes.data);
+    } catch (err) {
+        console.error(`[Telegram API Relay Error] ${method}:`, err.response?.data || err.message);
+        const status = err.response && err.response.status ? err.response.status : 500;
+        return res.status(status).json(err.response && err.response.data ? err.response.data : { ok: false, description: err.message });
+    }
+});
+
 // ===== EMAIL CLOUD RELAY (HTTPS GATEWAY FOR GOOGLE APPS SCRIPT) =====
 const GAS_DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbx0ODR1jVy2lf-klShJ29SY2QEfLylM7MWhBM-u-xX8bqpK4t0WOD37_y3ctxVaeqk2/exec';
 const GAS_SECRET = 'MAPALA_PEREGRINA_SECRET_2026';
