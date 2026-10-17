@@ -931,6 +931,61 @@ app.post('/api/send-email', async (req, res) => {
     }
 });
 
+// ===== GOOGLE DRIVE CLOUD STORAGE RELAY =====
+app.post('/api/gdrive-upload', async (req, res) => {
+    const { file_name, file_base64, folder, mime_type, overwrite, gas_url } = req.body;
+    if (!file_name || !file_base64) {
+        return res.status(400).json({ status: 'error', message: 'file_name dan file_base64 wajib disertakan.' });
+    }
+
+    try {
+        const targetUrl = gas_url || GAS_DEFAULT_URL;
+        console.log(`[GDrive Relay] Mengunggah file ${file_name} ke Google Drive (${folder || 'Umum'})...`);
+        const payload = {
+            key: GAS_SECRET,
+            action: 'upload_file',
+            file_name,
+            file_base64,
+            folder: folder || 'Umum',
+            mime_type: mime_type || '',
+            overwrite: overwrite !== false
+        };
+
+        const response = await axios.post(targetUrl, payload, {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 60000,
+            maxRedirects: 5
+        });
+
+        console.log(`[GDrive Relay] Respon GAS:`, response.status, response.data);
+        return res.json(response.data);
+    } catch (err) {
+        console.error(`[GDrive Relay Error]`, err.message);
+        return res.status(500).json({
+            status: 'error',
+            message: 'Gagal mengunggah ke Google Drive: ' + err.message,
+            detail: err.response ? err.response.data : null
+        });
+    }
+});
+
+app.post('/api/gdrive-status', async (req, res) => {
+    try {
+        const targetUrl = (req.body && req.body.gas_url) || GAS_DEFAULT_URL;
+        const response = await axios.post(targetUrl, {
+            key: GAS_SECRET,
+            action: 'status'
+        }, {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 15000,
+            maxRedirects: 5
+        });
+        return res.json(response.data);
+    } catch (err) {
+        return res.status(500).json({ status: 'error', message: err.message });
+    }
+});
+
 app.post('/api/restart', async (req, res) => {
     try {
         if (sock) {
