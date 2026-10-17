@@ -977,7 +977,7 @@ app.post('/api/gdrive-status', async (req, res) => {
             action: 'status'
         }, {
             headers: { 'Content-Type': 'application/json' },
-            timeout: 15000,
+            timeout: 45000,
             maxRedirects: 5
         });
         return res.json(response.data);
