@@ -10,7 +10,8 @@ const {
     useMultiFileAuthState,
     DisconnectReason,
     fetchLatestBaileysVersion,
-    Browsers
+    Browsers,
+    downloadMediaMessage
 } = require('@whiskeysockets/baileys');
 
 const app = express();
@@ -314,12 +315,50 @@ async function startWhatsApp() {
                 const senderJid = isGroup ? (msg.key.participant || msg.participant) : remoteJid;
                 const senderName = msg.pushName || 'Kawan Peregrina';
 
-                // Ekstrak pesan teks
-                const text = msg.message?.conversation ||
-                             msg.message?.extendedTextMessage?.text ||
-                             msg.message?.imageMessage?.caption ||
-                             msg.message?.videoMessage?.caption ||
-                             '';
+                // Bongkar pesan jika di dalam pembungkus (viewOnce, ephemeral, dsb)
+                const actualMessage = msg.message?.ephemeralMessage?.message ||
+                                      msg.message?.viewOnceMessage?.message ||
+                                      msg.message?.viewOnceMessageV2?.message ||
+                                      msg.message?.documentWithCaptionMessage?.message ||
+                                      msg.message;
+
+                // Deteksi apakah ada berkas gambar / foto
+                let imageBase64 = null;
+                let imageMime = null;
+                const isImage = Boolean(actualMessage?.imageMessage);
+
+                if (isImage) {
+                    try {
+                        const buffer = await downloadMediaMessage(
+                            msg,
+                            'buffer',
+                            {},
+                            {
+                                logger: pino({ level: 'silent' }),
+                                reuploadRequest: sock.updateMediaMessage
+                            }
+                        );
+                        if (buffer && buffer.length > 0) {
+                            imageBase64 = buffer.toString('base64');
+                            imageMime = actualMessage.imageMessage.mimetype || 'image/jpeg';
+                            console.log(`[Media Masuk] Berhasil unduh foto (${(buffer.length / 1024).toFixed(1)} KB) dari ${senderName}`);
+                        }
+                    } catch (dlErr) {
+                        console.warn('[Baileys Media DL Warning]', dlErr.message);
+                    }
+                }
+
+                // Ekstrak pesan teks atau caption foto
+                let text = actualMessage?.conversation ||
+                           actualMessage?.extendedTextMessage?.text ||
+                           actualMessage?.imageMessage?.caption ||
+                           actualMessage?.videoMessage?.caption ||
+                           '';
+
+                // Jika pengguna mengirim foto tanpa caption di private chat, beri teks default
+                if (isImage && (!text || !text.trim()) && !isGroup) {
+                    text = 'Upload dokumentasi kegiatan arsip';
+                }
 
                 if (!text || !text.trim()) continue;
 
@@ -329,9 +368,9 @@ async function startWhatsApp() {
                 const botLid = (sock.user?.lid || '').replace(/:.*@/, '@');
                 const botLidNum = botLid.split('@')[0];
 
-                const contextInfo = msg.message?.extendedTextMessage?.contextInfo ||
-                                    msg.message?.imageMessage?.contextInfo ||
-                                    msg.message?.videoMessage?.contextInfo || {};
+                const contextInfo = actualMessage?.extendedTextMessage?.contextInfo ||
+                                    actualMessage?.imageMessage?.contextInfo ||
+                                    actualMessage?.videoMessage?.contextInfo || {};
                 const mentions = contextInfo.mentionedJid || [];
 
                 // 1. Cek mention bot di grup (cocokkan JID, nomor, atau LID)
@@ -407,6 +446,8 @@ async function startWhatsApp() {
                     sender: senderJid,
                     sender_name: senderName,
                     message: text.trim(),
+                    image_base64: imageBase64,
+                    image_mime: imageMime,
                     is_group: isGroup,
                     group_id: isGroup ? remoteJid : null,
                     group_name: groupName,
