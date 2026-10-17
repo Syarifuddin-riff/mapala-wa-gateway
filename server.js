@@ -890,7 +890,7 @@ app.all('/api/trigger-backup', async (req, res) => {
 });
 
 // ===== EMAIL CLOUD RELAY (HTTPS GATEWAY FOR GOOGLE APPS SCRIPT) =====
-const GAS_DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbx0ODR1jVy2lf-klShJ29SY2QEfLylM7MWhBM-u-xX8bqpK4t0WOD37_y3ctxVaeqk2/exec';
+const GAS_DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbwIGlsolAAsP1OIoA0W6sqQLpHV536UWJWCvURrMxHuSFGRaqfs2RASWLkgdQBwTUfq/exec';
 const GAS_SECRET = 'MAPALA_PEREGRINA_SECRET_2026';
 
 app.post('/api/send-email', async (req, res) => {
