@@ -442,119 +442,144 @@ async function startWhatsApp() {
     });
 }
 
-// ===== DAEMON POLLING OUTBOX: NOTIFIKASI INSTAN DEVELOPER =====
+// ===== DAEMON POLLING OUTBOX: ADAPTIVE SMART POLLING (ANTI-SUSPEND PROTECTION) =====
+// Saat antrean kosong: polling santai tiap 15-20 detik (menghemat 80%+ kuota hits harian).
+// Saat ada antrean pesan: polling otomatis cepat (3 detik) hingga antrean tuntas terkirim.
 let isPollingOutbox = false;
-setInterval(async () => {
-    if (isPollingOutbox || connectionStatus !== 'connected' || !sock) return;
+let outboxPollDelay = 15000;
+
+async function runOutboxPoll() {
+    if (isPollingOutbox || connectionStatus !== 'connected' || !sock) {
+        setTimeout(runOutboxPoll, outboxPollDelay);
+        return;
+    }
     isPollingOutbox = true;
 
     try {
         const res = await axios.get(OUTBOX_URL, { timeout: 8000 });
         const messages = res.data?.messages || [];
 
-        for (const item of messages) {
-            const rawTarget = (item.phone_number || '').trim();
-            if (!rawTarget || !item.message) continue;
+        if (messages.length > 0) {
+            outboxPollDelay = 3000; // Percepat polling saat ada pesan aktif
+            for (const item of messages) {
+                const rawTarget = (item.phone_number || '').trim();
+                if (!rawTarget || !item.message) continue;
 
-            let jid = rawTarget;
-            if (rawTarget.includes('@g.us') || rawTarget.includes('@lid') || rawTarget.includes('@s.whatsapp.net')) {
-                jid = rawTarget;
-            } else {
-                const clean = rawTarget.replace(/[^0-9]/g, '');
-                if (!clean) continue;
-                // Jika format menyerupai LID (>=14 digit dan tidak diawali nomor HP lokal 628/08), gunakan @lid
-                if (clean.length > 13 && !clean.startsWith('628') && !clean.startsWith('08')) {
-                    jid = `${clean}@lid`;
+                let jid = rawTarget;
+                if (rawTarget.includes('@g.us') || rawTarget.includes('@lid') || rawTarget.includes('@s.whatsapp.net')) {
+                    jid = rawTarget;
                 } else {
-                    let formatted = clean;
-                    if (formatted.startsWith('08')) formatted = '62' + formatted.slice(1);
-                    jid = `${formatted}@s.whatsapp.net`;
-                }
-            }
-
-            try {
-                console.log(`[Outbox] Mengirim notifikasi ke ${jid}...`);
-                await sock.sendMessage(jid, { text: item.message });
-                await axios.post(CONFIRM_URL, { id: item.id, status: 'sent' }, { timeout: 5000 });
-                console.log(`[Outbox] Notifikasi #${item.id} berhasil terkirim ke ${jid}!`);
-            } catch (sendErr) {
-                console.warn(`[Outbox Warning] Gagal kirim #${item.id} ke ${jid}: ${sendErr.message}. Mencoba fallback...`);
-                let altJid = null;
-                if (jid.endsWith('@lid')) {
-                    altJid = jid.replace('@lid', '@s.whatsapp.net');
-                } else if (jid.endsWith('@s.whatsapp.net') && !jid.startsWith('628')) {
-                    altJid = jid.replace('@s.whatsapp.net', '@lid');
-                }
-                let success = false;
-                if (altJid) {
-                    try {
-                        console.log(`[Outbox] Mencoba fallback ke ${altJid}...`);
-                        await sock.sendMessage(altJid, { text: item.message });
-                        await axios.post(CONFIRM_URL, { id: item.id, status: 'sent' }, { timeout: 5000 });
-                        console.log(`[Outbox] Fallback #${item.id} berhasil terkirim ke ${altJid}!`);
-                        success = true;
-                    } catch (altErr) {
-                        console.error(`[Outbox Error] Fallback juga gagal: ${altErr.message}`);
+                    const clean = rawTarget.replace(/[^0-9]/g, '');
+                    if (!clean) continue;
+                    if (clean.length > 13 && !clean.startsWith('628') && !clean.startsWith('08')) {
+                        jid = `${clean}@lid`;
+                    } else {
+                        let formatted = clean;
+                        if (formatted.startsWith('08')) formatted = '62' + formatted.slice(1);
+                        jid = `${formatted}@s.whatsapp.net`;
                     }
                 }
-                if (!success) {
-                    await axios.post(CONFIRM_URL, { id: item.id, status: 'failed', error: sendErr.message }, { timeout: 5000 }).catch(() => {});
+
+                try {
+                    console.log(`[Outbox] Mengirim notifikasi ke ${jid}...`);
+                    await sock.sendMessage(jid, { text: item.message });
+                    await axios.post(CONFIRM_URL, { id: item.id, status: 'sent' }, { timeout: 5000 });
+                    console.log(`[Outbox] Notifikasi #${item.id} berhasil terkirim ke ${jid}!`);
+                } catch (sendErr) {
+                    console.warn(`[Outbox Warning] Gagal kirim #${item.id} ke ${jid}: ${sendErr.message}. Mencoba fallback...`);
+                    let altJid = null;
+                    if (jid.endsWith('@lid')) {
+                        altJid = jid.replace('@lid', '@s.whatsapp.net');
+                    } else if (jid.endsWith('@s.whatsapp.net') && !jid.startsWith('628')) {
+                        altJid = jid.replace('@s.whatsapp.net', '@lid');
+                    }
+                    let success = false;
+                    if (altJid) {
+                        try {
+                            console.log(`[Outbox] Mencoba fallback ke ${altJid}...`);
+                            await sock.sendMessage(altJid, { text: item.message });
+                            await axios.post(CONFIRM_URL, { id: item.id, status: 'sent' }, { timeout: 5000 });
+                            console.log(`[Outbox] Fallback #${item.id} berhasil terkirim ke ${altJid}!`);
+                            success = true;
+                        } catch (altErr) {
+                            console.error(`[Outbox Error] Fallback juga gagal: ${altErr.message}`);
+                        }
+                    }
+                    if (!success) {
+                        await axios.post(CONFIRM_URL, { id: item.id, status: 'failed', error: sendErr.message }, { timeout: 5000 }).catch(() => {});
+                    }
                 }
             }
+        } else {
+            outboxPollDelay = 15000; // Antrean kosong: perlambat untuk hemat kuota hosting
         }
 
     } catch (pollErr) {
-        // Silent ignore on network glitch
+        outboxPollDelay = 25000; // Glitch jaringan / server busy: tunggu 25 detik
     } finally {
         isPollingOutbox = false;
+        setTimeout(runOutboxPoll, outboxPollDelay);
     }
-}, 3000);
+}
+setTimeout(runOutboxPoll, 5000);
 
-// ===== DAEMON POLLING EMAIL OUTBOX: PENGIRIMAN EMAIL CLOUD RELAY =====
+// ===== DAEMON POLLING EMAIL OUTBOX: ADAPTIVE SMART POLLING =====
 const EMAIL_OUTBOX_URL = WEBHOOK_URL.replace(/\/webhook\/?$/, '/email_outbox');
 const CONFIRM_EMAIL_URL = WEBHOOK_URL.replace(/\/webhook\/?$/, '/confirm_email_outbox');
 
 let isPollingEmailOutbox = false;
-setInterval(async () => {
-    if (isPollingEmailOutbox) return;
+let emailPollDelay = 20000;
+
+async function runEmailPoll() {
+    if (isPollingEmailOutbox) {
+        setTimeout(runEmailPoll, emailPollDelay);
+        return;
+    }
     isPollingEmailOutbox = true;
 
     try {
         const res = await axios.get(EMAIL_OUTBOX_URL, { timeout: 8000 });
         const emails = res.data?.emails || [];
 
-        for (const item of emails) {
-            const to = (item.recipient || '').trim();
-            if (!to || !item.subject) continue;
+        if (emails.length > 0) {
+            emailPollDelay = 3000; // Percepat saat ada email menunggu
+            for (const item of emails) {
+                const to = (item.recipient || '').trim();
+                if (!to || !item.subject) continue;
 
-            try {
-                console.log(`[Email Outbox] Mengirim email #${item.id} ke ${to}...`);
-                const gasRes = await axios.post(GAS_DEFAULT_URL, {
-                    key: GAS_SECRET,
-                    to: to,
-                    subject: item.subject,
-                    body: item.plain_body || 'Silakan buka email ini menggunakan aplikasi atau browser yang mendukung HTML.',
-                    html: item.html_message || '',
-                    sender_name: item.sender_name || 'Mapala Peregrina UNISM'
-                }, {
-                    headers: { 'Content-Type': 'application/json' },
-                    timeout: 15000,
-                    maxRedirects: 5
-                });
+                try {
+                    console.log(`[Email Outbox] Mengirim email #${item.id} ke ${to}...`);
+                    const gasRes = await axios.post(GAS_DEFAULT_URL, {
+                        key: GAS_SECRET,
+                        to: to,
+                        subject: item.subject,
+                        body: item.plain_body || 'Silakan buka email ini menggunakan aplikasi atau browser yang mendukung HTML.',
+                        html: item.html_message || '',
+                        sender_name: item.sender_name || 'Mapala Peregrina UNISM'
+                    }, {
+                        headers: { 'Content-Type': 'application/json' },
+                        timeout: 15000,
+                        maxRedirects: 5
+                    });
 
-                await axios.post(CONFIRM_EMAIL_URL, { id: item.id, status: 'sent', response: JSON.stringify(gasRes.data) }, { timeout: 5000 });
-                console.log(`[Email Outbox] Email #${item.id} berhasil terkirim ke ${to}!`);
-            } catch (err) {
-                console.error(`[Email Outbox Error] Gagal kirim #${item.id} ke ${to}: ${err.message}`);
-                await axios.post(CONFIRM_EMAIL_URL, { id: item.id, status: 'failed', error: err.message }, { timeout: 5000 });
+                    await axios.post(CONFIRM_EMAIL_URL, { id: item.id, status: 'sent', response: JSON.stringify(gasRes.data) }, { timeout: 5000 });
+                    console.log(`[Email Outbox] Email #${item.id} berhasil terkirim ke ${to}!`);
+                } catch (err) {
+                    console.error(`[Email Outbox Error] Gagal kirim #${item.id} ke ${to}: ${err.message}`);
+                    await axios.post(CONFIRM_EMAIL_URL, { id: item.id, status: 'failed', error: err.message }, { timeout: 5000 });
+                }
             }
+        } else {
+            emailPollDelay = 20000; // Antrean kosong: hemat kuota hosting
         }
     } catch (e) {
-        // Silent ignore on network glitch
+        emailPollDelay = 30000; // Glitch jaringan: tunggu 30 detik
     } finally {
         isPollingEmailOutbox = false;
+        setTimeout(runEmailPoll, emailPollDelay);
     }
-}, 5000);
+}
+setTimeout(runEmailPoll, 8000);
 
 // ===== API REST ENDPOINTS UNTUK PANEL DEVELOPER =====
 
@@ -733,6 +758,26 @@ app.post('/api/send', async (req, res) => {
         res.json({ status: 'success', message: 'Pesan berhasil dikirim.' });
     } catch (err) {
         res.status(500).json({ status: 'error', message: err.message });
+    }
+});
+
+// ===== TELEGRAM WEBHOOK RELAY (BYPASS INFINITYFREE AES SHIELD) =====
+const TG_TARGET_WEBHOOK = WEBHOOK_URL.replace(/\/whatsapp\/webhook\/?$/, '/telegram/webhook');
+
+app.post('/telegram/webhook', async (req, res) => {
+    // Balas 200 OK langsung ke Telegram
+    res.status(200).send('OK');
+
+    // Teruskan payload ke CodeIgniter di InfinityFree dengan Cookie Bypass otomatis
+    try {
+        console.log('[Telegram Relay] Menerima update dari Telegram, meneruskan ke CI3...');
+        await axios.post(TG_TARGET_WEBHOOK, req.body, {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 15000
+        });
+        console.log('[Telegram Relay] Sukses diteruskan ke CI3.');
+    } catch (err) {
+        console.error('[Telegram Relay Error] Gagal meneruskan ke CI3:', err.message);
     }
 });
 
