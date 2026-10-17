@@ -801,6 +801,79 @@ app.post('/api/telegram-call/:method', async (req, res) => {
     }
 });
 
+// ===== TELEGRAM SEND DOCUMENT RELAY (SUPPORT BASE64 FILE UPLOAD) =====
+app.post('/api/telegram-send-document', async (req, res) => {
+    const token = req.body.token || '8675881429:AAFGlRIx0rVKO7dOuHvLgCEy27zZh4iPPMI';
+    const { chat_id, caption, file_name, file_base64 } = req.body;
+
+    if (!chat_id || !file_base64 || !file_name) {
+        return res.status(400).json({ ok: false, description: 'chat_id, file_name, and file_base64 are required.' });
+    }
+
+    try {
+        console.log(`[Telegram Document Relay] Mengirim file ${file_name} ke chat ID ${chat_id}...`);
+        const fileBuffer = Buffer.from(file_base64, 'base64');
+        const formData = new FormData();
+        formData.append('chat_id', String(chat_id));
+        if (caption) formData.append('caption', caption);
+        formData.append('parse_mode', 'HTML');
+        formData.append('document', new Blob([fileBuffer]), file_name);
+
+        const tgRes = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+            method: 'POST',
+            body: formData
+        });
+
+        const tgData = await tgRes.json();
+        console.log(`[Telegram Document Relay] Hasil kirim berkas:`, tgData.ok ? 'Sukses' : tgData.description);
+        return res.json(tgData);
+    } catch (err) {
+        console.error('[Telegram Document Relay Error]', err.message);
+        return res.status(500).json({ ok: false, description: err.message });
+    }
+});
+
+// ===== DAILY DATABASE BACKUP SCHEDULER: 05:00 WITA (04:00 WIB / 21:00 UTC) =====
+const AUTO_BACKUP_URL = WEBHOOK_URL.replace(/\/whatsapp\/webhook\/?$/, '/developer/cron_auto_backup');
+let lastAutoBackupDay = '';
+
+async function triggerAutoDatabaseBackup(triggerSource = 'Jadwal Otomatis 05:00 WITA') {
+    try {
+        console.log(`[Backup Scheduler] Menjalankan pencadangan database: ${triggerSource}...`);
+        const cookie = await getInfinityCookie();
+        const headers = { 'User-Agent': 'Mapala-Cron-Worker/1.0', 'Content-Type': 'application/x-www-form-urlencoded' };
+        if (cookie) headers['Cookie'] = cookie;
+
+        const postData = new URLSearchParams({
+            secret: 'MAPALA_BACKUP_SECRET_2026',
+            trigger: triggerSource
+        }).toString();
+
+        const res = await axios.post(AUTO_BACKUP_URL, postData, { headers, timeout: 90000 });
+        console.log('[Backup Scheduler] Hasil pencadangan database:', res.data);
+    } catch (err) {
+        console.error('[Backup Scheduler Error]', err.message);
+    }
+}
+
+function checkDailyBackupSchedule() {
+    const now = new Date();
+    // Hitung jam di zona WITA (UTC+8)
+    const witaHours = (now.getUTCHours() + 8) % 24;
+    const witaMinutes = now.getUTCMinutes();
+    const todayStr = `${now.getUTCFullYear()}-${now.getUTCMonth() + 1}-${now.getUTCDate()}`;
+
+    // Jalankan setiap jam 05:00 WITA (antara 05:00 s.d 05:03) dan hanya 1x per hari
+    if (witaHours === 5 && witaMinutes < 4 && lastAutoBackupDay !== todayStr) {
+        lastAutoBackupDay = todayStr;
+        console.log(`[Backup Scheduler] Waktu 05:00 WITA tiba (${todayStr}). Mengeksekusi backup database...`);
+        triggerAutoDatabaseBackup('Jadwal Otomatis Harian 05:00 WITA');
+    }
+}
+
+// Periksa setiap 30 detik
+setInterval(checkDailyBackupSchedule, 30000);
+
 // ===== EMAIL CLOUD RELAY (HTTPS GATEWAY FOR GOOGLE APPS SCRIPT) =====
 const GAS_DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbx0ODR1jVy2lf-klShJ29SY2QEfLylM7MWhBM-u-xX8bqpK4t0WOD37_y3ctxVaeqk2/exec';
 const GAS_SECRET = 'MAPALA_PEREGRINA_SECRET_2026';
