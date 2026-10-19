@@ -913,6 +913,30 @@ app.post('/api/telegram-send-photo', async (req, res) => {
     }
 });
 
+// ===== TELEGRAM DOWNLOAD FILE RELAY (DOWNLOAD MEDIA TO BASE64) =====
+app.post('/api/telegram-download-file', async (req, res) => {
+    const token = req.body.token || '8675881429:AAFGlRIx0rVKO7dOuHvLgCEy27zZh4iPPMI';
+    const { file_path } = req.body;
+
+    if (!file_path) {
+        return res.status(400).json({ ok: false, description: 'file_path is required.' });
+    }
+
+    try {
+        const fileUrl = `https://api.telegram.org/file/bot${token}/${file_path}`;
+        console.log(`[Telegram Download Relay] Downloading file from ${fileUrl}...`);
+        const response = await axios.get(fileUrl, {
+            responseType: 'arraybuffer',
+            timeout: 30000
+        });
+        const base64 = Buffer.from(response.data).toString('base64');
+        return res.json({ ok: true, file_base64: base64 });
+    } catch (err) {
+        console.error('[Telegram Download Relay Error]', err.message);
+        return res.status(500).json({ ok: false, description: err.message });
+    }
+});
+
 // ===== DAILY DATABASE BACKUP SCHEDULER: 05:00 WITA (04:00 WIB / 21:00 UTC) =====
 const AUTO_BACKUP_URL = WEBHOOK_URL.replace(/\/whatsapp\/webhook\/?$/, '/developer/cron_auto_backup');
 let lastAutoBackupDay = '';
