@@ -846,7 +846,7 @@ app.post('/api/telegram-call/:method', async (req, res) => {
 // ===== TELEGRAM SEND DOCUMENT RELAY (SUPPORT BASE64 FILE UPLOAD) =====
 app.post('/api/telegram-send-document', async (req, res) => {
     const token = req.body.token || '8675881429:AAFGlRIx0rVKO7dOuHvLgCEy27zZh4iPPMI';
-    const { chat_id, caption, file_name, file_base64 } = req.body;
+    const { chat_id, caption, file_name, file_base64, reply_markup } = req.body;
 
     if (!chat_id || !file_base64 || !file_name) {
         return res.status(400).json({ ok: false, description: 'chat_id, file_name, and file_base64 are required.' });
@@ -859,6 +859,9 @@ app.post('/api/telegram-send-document', async (req, res) => {
         formData.append('chat_id', String(chat_id));
         if (caption) formData.append('caption', caption);
         formData.append('parse_mode', 'HTML');
+        if (reply_markup) {
+            formData.append('reply_markup', typeof reply_markup === 'string' ? reply_markup : JSON.stringify(reply_markup));
+        }
         formData.append('document', new Blob([fileBuffer]), file_name);
 
         const tgRes = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
@@ -871,6 +874,41 @@ app.post('/api/telegram-send-document', async (req, res) => {
         return res.json(tgData);
     } catch (err) {
         console.error('[Telegram Document Relay Error]', err.message);
+        return res.status(500).json({ ok: false, description: err.message });
+    }
+});
+
+// ===== TELEGRAM SEND PHOTO RELAY (SUPPORT BASE64 PHOTO UPLOAD & INLINE KEYBOARD) =====
+app.post('/api/telegram-send-photo', async (req, res) => {
+    const token = req.body.token || '8675881429:AAFGlRIx0rVKO7dOuHvLgCEy27zZh4iPPMI';
+    const { chat_id, caption, file_name, file_base64, reply_markup } = req.body;
+
+    if (!chat_id || !file_base64) {
+        return res.status(400).json({ ok: false, description: 'chat_id and file_base64 are required.' });
+    }
+
+    try {
+        console.log(`[Telegram Photo Relay] Mengirim foto ${file_name || 'photo.jpg'} ke chat ID ${chat_id}...`);
+        const fileBuffer = Buffer.from(file_base64, 'base64');
+        const formData = new FormData();
+        formData.append('chat_id', String(chat_id));
+        if (caption) formData.append('caption', caption);
+        formData.append('parse_mode', 'HTML');
+        if (reply_markup) {
+            formData.append('reply_markup', typeof reply_markup === 'string' ? reply_markup : JSON.stringify(reply_markup));
+        }
+        formData.append('photo', new Blob([fileBuffer]), file_name || 'photo.jpg');
+
+        const tgRes = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+            method: 'POST',
+            body: formData
+        });
+
+        const tgData = await tgRes.json();
+        console.log(`[Telegram Photo Relay] Hasil kirim foto:`, tgData.ok ? 'Sukses' : tgData.description);
+        return res.json(tgData);
+    } catch (err) {
+        console.error('[Telegram Photo Relay Error]', err.message);
         return res.status(500).json({ ok: false, description: err.message });
     }
 });
