@@ -939,9 +939,37 @@ app.post('/api/telegram-download-file', async (req, res) => {
 
 // ===== DAILY DATABASE BACKUP SCHEDULER: 05:00 WITA (04:00 WIB / 21:00 UTC) =====
 const AUTO_BACKUP_URL = WEBHOOK_URL.replace(/\/whatsapp\/webhook\/?$/, '/developer/cron_auto_backup');
+const BACKUP_DAY_FILE = path.join(SESSION_DIR, 'last_auto_backup_day.txt');
 let lastAutoBackupDay = '';
+let isBackupRunning = false;
+
+// Baca tanggal backup terakhir yang tersimpan di persistent disk agar tahan restart kontainer
+try {
+    if (fs.existsSync(BACKUP_DAY_FILE)) {
+        lastAutoBackupDay = fs.readFileSync(BACKUP_DAY_FILE, 'utf8').trim();
+        console.log('[Backup Scheduler] Tanggal backup terakhir dari persistent storage:', lastAutoBackupDay);
+    }
+} catch (e) {
+    console.warn('[Backup Scheduler Warning] Gagal membaca berkas status backup:', e.message);
+}
+
+function saveLastBackupDay(dayStr) {
+    try {
+        if (!fs.existsSync(SESSION_DIR)) {
+            fs.mkdirSync(SESSION_DIR, { recursive: true });
+        }
+        fs.writeFileSync(BACKUP_DAY_FILE, dayStr, 'utf8');
+    } catch (e) {
+        console.warn('[Backup Scheduler Warning] Gagal menyimpan tanggal backup ke disk:', e.message);
+    }
+}
 
 async function triggerAutoDatabaseBackup(triggerSource = 'Jadwal Otomatis 05:00 WITA') {
+    if (isBackupRunning) {
+        console.warn(`[Backup Scheduler] Proses backup sedang berjalan, panggilan '${triggerSource}' dilewati.`);
+        return { error: 'Backup already running' };
+    }
+    isBackupRunning = true;
     try {
         console.log(`[Backup Scheduler] Menjalankan pencadangan database: ${triggerSource}...`);
         const cookie = await getInfinityCookie();
@@ -959,6 +987,8 @@ async function triggerAutoDatabaseBackup(triggerSource = 'Jadwal Otomatis 05:00 
     } catch (err) {
         console.error('[Backup Scheduler Error]', err.message);
         return { error: err.message };
+    } finally {
+        isBackupRunning = false;
     }
 }
 
@@ -968,11 +998,13 @@ function checkDailyBackupSchedule() {
     const witaTime = new Date(now.getTime() + (8 * 3600 * 1000));
     const witaHours = witaTime.getUTCHours();
     const witaMinutes = witaTime.getUTCMinutes();
-    const todayWita = `${witaTime.getUTCFullYear()}-${witaTime.getUTCMonth() + 1}-${witaTime.getUTCDate()}`;
+    const pad = (n) => String(n).padStart(2, '0');
+    const todayWita = `${witaTime.getUTCFullYear()}-${pad(witaTime.getUTCMonth() + 1)}-${pad(witaTime.getUTCDate())}`;
 
-    // Jalankan setiap jam 05:00 WITA (antara 05:00 s.d 05:03) dan hanya 1x per hari
-    if (witaHours === 5 && witaMinutes < 4 && lastAutoBackupDay !== todayWita) {
+    // Jalankan setiap jam 05:00 WITA (antara 05:00 s.d 05:05) dan hanya 1x per hari
+    if (witaHours === 5 && witaMinutes < 6 && lastAutoBackupDay !== todayWita && !isBackupRunning) {
         lastAutoBackupDay = todayWita;
+        saveLastBackupDay(todayWita);
         console.log(`[Backup Scheduler] Waktu 05:00 WITA tiba (${todayWita}). Mengeksekusi backup database...`);
         triggerAutoDatabaseBackup('Jadwal Otomatis Harian 05:00 WITA');
     }
