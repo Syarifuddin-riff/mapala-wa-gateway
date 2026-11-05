@@ -1053,7 +1053,7 @@ app.post('/api/send-email', async (req, res) => {
         console.log(`[Email Relay] Respon GAS:`, response.status, response.data);
         return res.json({
             status: 'success',
-            message: 'Email berhasil dikirim via Railway Cloud Relay',
+            message: 'Email berhasil dikirim via Cloud Relay',
             data: response.data
         });
     } catch (err) {
