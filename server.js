@@ -808,7 +808,14 @@ app.post('/api/send', async (req, res) => {
     try {
         let jid = to;
         if (!jid.includes('@')) {
-            const clean = to.replace(/[^0-9]/g, '');
+            let clean = to.replace(/[^0-9]/g, '');
+            if (clean.startsWith('08')) {
+                clean = '628' + clean.slice(2);
+            } else if (clean.startsWith('8')) {
+                clean = '62' + clean;
+            } else if (clean.startsWith('6208')) {
+                clean = '628' + clean.slice(4);
+            }
             jid = `${clean}@s.whatsapp.net`;
         }
         await sock.sendMessage(jid, { text: message });
