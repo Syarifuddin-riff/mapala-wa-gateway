@@ -1195,4 +1195,15 @@ app.listen(PORT, () => {
     console.log(`[Assistant Peregrina WA Gateway] Target Webhook: ${WEBHOOK_URL}`);
     console.log(`[Assistant Peregrina WA Gateway] Outbox Queue Polling: Aktif`);
     startWhatsApp();
+
+    // ===== AUTO KEEP-ALIVE (SELF-PING SETIAP 10 MENIT AGAR CLOUD TIDAK SLEEP) =====
+    const SELF_URL = process.env.RENDER_EXTERNAL_URL || 'https://mapala-wa-gateway.onrender.com';
+    setInterval(async () => {
+        try {
+            const resp = await axios.get(`${SELF_URL}/health`, { timeout: 10000 });
+            console.log(`[Keep-Alive] Self-ping sukses (${resp.status}) pada ${new Date().toLocaleTimeString('id-ID')}`);
+        } catch (e) {
+            console.warn(`[Keep-Alive Warning] Self-ping gagal: ${e.message}`);
+        }
+    }, 10 * 60 * 1000);
 });
