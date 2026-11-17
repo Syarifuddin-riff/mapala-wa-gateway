@@ -23,7 +23,12 @@ const PORT = process.env.PORT || 3000;
 const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://mapalaperegrina.gt.tc/whatsapp/webhook';
 const OUTBOX_URL = WEBHOOK_URL.replace(/\/webhook\/?$/, '/outbox');
 const CONFIRM_URL = WEBHOOK_URL.replace(/\/webhook\/?$/, '/confirm_outbox');
-const SESSION_DIR = path.join(__dirname, 'session_auth');
+const isGlitch = process.env.PROJECT_DOMAIN !== undefined || fs.existsSync(path.join(__dirname, '.data'));
+const DATA_DIR = isGlitch ? path.join(__dirname, '.data') : __dirname;
+if (isGlitch && !fs.existsSync(DATA_DIR)) {
+    try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch (e) {}
+}
+const SESSION_DIR = process.env.SESSION_DIR || (isGlitch ? path.join(DATA_DIR, 'session_auth') : path.join(__dirname, 'session_auth'));
 const crypto = require('crypto');
 
 // ===== INFINITYFREE ANTI-BOT BYPASS (AUTOMATIC AES CHALLENGE RESOLVER) =====

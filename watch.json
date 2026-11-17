@@ -1,0 +1,21 @@
+{
+  "install": {
+    "include": [
+      "^package\\.json$",
+      "^\\.env$"
+    ]
+  },
+  "restart": {
+    "exclude": [
+      "^session_auth/",
+      "^\\.data/",
+      "^last_auto_backup_day\\.txt$",
+      "^.*\\.log$",
+      "^tmp/"
+    ],
+    "include": [
+      "\\.js$"
+    ]
+  },
+  "throttle": 1000
+}
