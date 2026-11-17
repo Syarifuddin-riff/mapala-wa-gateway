@@ -406,6 +406,16 @@ async function startWhatsApp() {
                     continue;
                 }
 
+                // Sesuai kebijakan sistem: Bot WhatsApp bertindak murni sebagai pengirim notifikasi sistem (outbox dispatcher).
+                // Bot TIDAK membalas chat dari siapapun yang berinteraksi dengannya KECUALI Admin Developer (6289525547600).
+                const senderClean = (senderJid || '').replace(/[^0-9]/g, '');
+                const isDeveloper = (senderClean === '6289525547600' || senderClean === '089525547600');
+
+                if (!isDeveloper) {
+                    // Abaikan semua chat masuk dari anggota biasa / grup, jangan balas pesan.
+                    continue;
+                }
+
                 // Cek apakah pesan memanggil bot
                 const isCallingAssistant = !isGroup || mentionedBot || isQuotingBot || textMatchesBot;
 
